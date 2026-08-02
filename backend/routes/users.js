@@ -47,8 +47,8 @@ router.post(
   upload.fields([{ name: "avatar", maxCount: 1 }, { name: "cover", maxCount: 1 }]),
   async (req, res) => {
     const updates = {};
-    if (req.files?.avatar?.[0]) updates.avatarUrl = `/uploads/avatars/${req.files.avatar[0].filename}`;
-    if (req.files?.cover?.[0]) updates.coverUrl = `/uploads/avatars/${req.files.cover[0].filename}`;
+    if (req.files?.avatar?.[0]) updates.avatarUrl = req.files.avatar[0].path;
+    if (req.files?.cover?.[0]) updates.coverUrl = req.files.cover[0].path;
 
     const user = await User.findByIdAndUpdate(req.user._id, updates, { new: true });
     res.json(user);

@@ -142,19 +142,15 @@ router.post(
       const slug = await makeUniqueSlug(body.title);
 
       const files = (req.files?.files || []).map((f) => ({
-        url: `/uploads/files/${f.filename}`,
+        url: f.path,
         originalName: f.originalname,
         mimeType: f.mimetype,
         sizeBytes: f.size,
       }));
 
-      const thumbnailUrl = req.files?.thumbnail?.[0]
-        ? `/uploads/thumbnails/${req.files.thumbnail[0].filename}`
-        : "";
+      const thumbnailUrl = req.files?.thumbnail?.[0]?.path || "";
 
-      const previewImageUrls = (req.files?.previewImages || []).map(
-        (f) => `/uploads/previews/${f.filename}`
-      );
+      const previewImageUrls = (req.files?.previewImages || []).map((f) => f.path);
 
       const content = await Content.create({
         ...body,
