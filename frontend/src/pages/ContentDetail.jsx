@@ -73,8 +73,10 @@ export default function ContentDetail() {
 
   async function handleDownload(fileIndex) {
     const { data: result } = await api.post(`/api/content/${content._id}/download/${fileIndex}`);
-    const apiUrl = api.defaults.baseURL;
-    window.open(`${apiUrl}${result.url}`, "_blank");
+    const fullUrl = result.url.startsWith("http")
+      ? result.url
+      : `${api.defaults.baseURL}${result.url}`;
+    window.open(fullUrl, "_blank");
   }
 
   async function submitComment(e) {
