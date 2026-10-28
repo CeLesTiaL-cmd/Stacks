@@ -6,10 +6,12 @@ import Bookmark from "../models/Bookmark.js";
 import User from "../models/User.js";
 import { requireAuth, optionalAuth } from "../middleware/auth.js";
 import { upload } from "../middleware/upload.js";
+import { canViewContent } from "../middleware/contentAccess.js";
+import { removeContentAndRelations } from "../services/removeContent.js";
 
 const router = express.Router();
 
-const MULTI_VALUE_FIELDS = ["tags", "keywords", "coAuthors", "externalLinks"];
+const MULTI_VALUE_FIELDS = ["tags", "keywords", "coAuthors", "externalLinks", "authorizedEmails"];
 
 function toArray(value) {
   if (value === undefined || value === null || value === "") return [];
@@ -20,15 +22,31 @@ function toArray(value) {
     .filter(Boolean);
 }
 
-async function makeUniqueSlug(title) {
+async function makeUniqueSlug(title, ignoreId = null) {
   const base = slugify(title, { lower: true, strict: true }).slice(0, 80);
   let slug = base || `upload-${Date.now()}`;
   let i = 1;
   // eslint-disable-next-line no-await-in-loop
-  while (await Content.exists({ slug })) {
+  while (await Content.exists({ slug, ...(ignoreId ? { _id: { $ne: ignoreId } } : {}) })) {
     slug = `${base}-${i++}`;
   }
   return slug;
+}
+
+/**
+ * Builds the $or clause that decides which content a given viewer may see,
+ * on top of status: "approved". A logged-out viewer only sees "public".
+ */
+function visibilityOr(user, emailVerified) {
+  const or = [{ visibility: "public" }];
+  if (user) {
+    or.push({ uploader: user._id }); // always see your own, regardless of visibility
+    if (user.isInstitutionalVerified && user.institutionDomain) {
+      or.push({ visibility: "institutional", institutionDomain: user.institutionDomain });
+    }
+    if (emailVerified) or.push({ visibility: "protected", authorizedEmails: user.email });
+  }
+  return or;
 }
 
 /**
@@ -38,7 +56,7 @@ async function makeUniqueSlug(title) {
  * department, course, teacher, semester, year, language, license, tag,
  * sort=recent|downloads|stars|views, page, limit
  */
-router.get("/", async (req, res) => {
+router.get("/", optionalAuth, async (req, res) => {
   const {
     q,
     category,
@@ -59,7 +77,7 @@ router.get("/", async (req, res) => {
     limit = 20,
   } = req.query;
 
-  const filter = { status: "approved", visibility: "public" };
+  const filter = { status: "approved", $or: visibilityOr(req.user, req.firebaseToken?.email_verified) };
 
   if (category) filter.category = category;
   if (subcategory) filter.subcategory = subcategory;
@@ -91,6 +109,7 @@ router.get("/", async (req, res) => {
       .sort(sortMap[sort] || sortMap.recent)
       .skip((pageNum - 1) * limitNum)
       .limit(limitNum)
+      .select("-authorizedEmails -institutionDomain")
       .populate("uploader", "name avatarUrl university"),
     Content.countDocuments(filter),
   ]);
@@ -119,6 +138,16 @@ router.get("/filters", async (req, res) => {
   });
 });
 
+// GET /api/content/leaderboard — top starred content (public only, for a shareable leaderboard)
+router.get("/leaderboard", async (req, res) => {
+  const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 10));
+  const items = await Content.find({ status: "approved", visibility: "public" })
+    .sort({ "counts.stars": -1, "counts.downloads": -1 })
+    .limit(limit)
+    .populate("uploader", "name avatarUrl university");
+  res.json(items);
+});
+
 // POST /api/content — create a new upload (goes to "pending" for admin approval)
 router.post(
   "/",
@@ -138,6 +167,22 @@ router.post(
       if (!body.title || !body.type || !body.category) {
         return res.status(400).json({ error: "title, type and category are required" });
       }
+      if (!req.files?.files?.length) {
+        return res.status(400).json({ error: "Add at least one document file to upload." });
+      }
+
+      // --- Visibility rules ---
+      const visibilityLevels = ["public", "institutional", "protected"];
+      if (body.visibility && !visibilityLevels.includes(body.visibility)) {
+        return res.status(400).json({ error: "Choose a valid visibility level." });
+      }
+      const visibility = body.visibility || "public";
+
+      if (visibility === "institutional" && !req.user.isInstitutionalVerified) {
+        return res.status(400).json({
+          error: "Verify your institutional email in Dashboard → Settings before posting institutional-only content.",
+        });
+      }
 
       const slug = await makeUniqueSlug(body.title);
 
@@ -149,7 +194,6 @@ router.post(
       }));
 
       const thumbnailUrl = req.files?.thumbnail?.[0]?.path || "";
-
       const previewImageUrls = (req.files?.previewImages || []).map((f) => f.path);
 
       const content = await Content.create({
@@ -160,6 +204,8 @@ router.post(
         files,
         thumbnailUrl,
         previewImageUrls,
+        visibility,
+        institutionDomain: visibility === "institutional" ? req.user.institutionDomain : "",
         status: "pending",
       });
 
@@ -185,7 +231,7 @@ router.get("/:slug", optionalAuth, async (req, res) => {
   const isOwner = req.user && String(req.user._id) === String(content.uploader._id);
   const isStaff = req.user && ["admin", "moderator"].includes(req.user.role);
 
-  if (content.status !== "approved" && !isOwner && !isStaff) {
+  if (!canViewContent(content, req.user, req.firebaseToken?.email_verified)) {
     return res.status(404).json({ error: "Not found" });
   }
 
@@ -205,10 +251,12 @@ router.get("/:slug", optionalAuth, async (req, res) => {
     viewerHasBookmarked = Boolean(bookmark);
   }
 
-  res.json({ content, viewerHasStarred, viewerHasBookmarked });
+  const contentResponse = content.toObject();
+  if (!isOwner && !isStaff) delete contentResponse.authorizedEmails;
+  res.json({ content: contentResponse, viewerHasStarred, viewerHasBookmarked });
 });
 
-// PATCH /api/content/:id — owner edits metadata
+// PATCH /api/content/:id — owner edits metadata (also used for visibility/privacy toggle)
 router.patch("/:id", requireAuth, async (req, res) => {
   const content = await Content.findById(req.params.id);
   if (!content) return res.status(404).json({ error: "Not found" });
@@ -236,12 +284,30 @@ router.patch("/:id", requireAuth, async (req, res) => {
     "coAuthors",
     "license",
     "visibility",
+    "authorizedEmails",
     "externalLinks",
     "githubRepo",
     "youtubeUrl",
     "doi",
     "publication",
   ];
+  const originalTitle = content.title;
+  const originalValues = Object.fromEntries(
+    editable.map((key) => [key, JSON.stringify(content[key])])
+  );
+
+  if (
+    req.body.visibility !== undefined &&
+    !["public", "institutional", "protected"].includes(req.body.visibility)
+  ) {
+    return res.status(400).json({ error: "Choose a valid visibility level." });
+  }
+
+  if (req.body.visibility === "institutional" && !req.user.isInstitutionalVerified) {
+    return res.status(400).json({
+      error: "Verify your institutional email in Dashboard → Settings before switching to Institutional visibility.",
+    });
+  }
 
   for (const key of editable) {
     if (req.body[key] !== undefined) {
@@ -249,25 +315,42 @@ router.patch("/:id", requireAuth, async (req, res) => {
     }
   }
 
+  if (req.body.title !== undefined && req.body.title !== originalTitle) {
+    content.slug = await makeUniqueSlug(req.body.title, content._id);
+  }
+
+  const contentFieldsChanged = editable.some(
+    (key) =>
+      !["visibility", "authorizedEmails"].includes(key) &&
+      req.body[key] !== undefined &&
+      originalValues[key] !== JSON.stringify(content[key])
+  );
+  if (contentFieldsChanged && content.status === "approved") content.status = "pending";
+
+  // Keep institutionDomain in sync whenever visibility changes to/away from "institutional"
+  if (req.body.visibility !== undefined) {
+    content.institutionDomain = content.visibility === "institutional" ? req.user.institutionDomain : "";
+  }
+
   await content.save();
   res.json(content);
 });
 
-// DELETE /api/content/:id
+// DELETE /api/content/:id — owner or admin only
 router.delete("/:id", requireAuth, async (req, res) => {
   const content = await Content.findById(req.params.id);
   if (!content) return res.status(404).json({ error: "Not found" });
   if (String(content.uploader) !== String(req.user._id) && req.user.role !== "admin") {
     return res.status(403).json({ error: "Not your upload" });
   }
-  await content.deleteOne();
+  await removeContentAndRelations(content);
   res.json({ ok: true });
 });
 
 // POST /api/content/:id/download/:fileIndex — tracks a download, returns the file URL
 router.post("/:id/download/:fileIndex", optionalAuth, async (req, res) => {
   const content = await Content.findById(req.params.id);
-  if (!content || content.status !== "approved") {
+  if (!canViewContent(content, req.user, req.firebaseToken?.email_verified)) {
     return res.status(404).json({ error: "Not found" });
   }
   const file = content.files[Number(req.params.fileIndex)];
@@ -284,7 +367,7 @@ router.post("/:id/download/:fileIndex", optionalAuth, async (req, res) => {
 router.post("/:id/star", requireAuth, async (req, res) => {
   const existing = await Star.findOne({ user: req.user._id, content: req.params.id });
   const content = await Content.findById(req.params.id);
-  if (!content) return res.status(404).json({ error: "Not found" });
+  if (!canViewContent(content, req.user, req.firebaseToken?.email_verified)) return res.status(404).json({ error: "Not found" });
 
   if (existing) {
     await existing.deleteOne();
@@ -303,7 +386,7 @@ router.post("/:id/star", requireAuth, async (req, res) => {
 router.post("/:id/bookmark", requireAuth, async (req, res) => {
   const existing = await Bookmark.findOne({ user: req.user._id, content: req.params.id });
   const content = await Content.findById(req.params.id);
-  if (!content) return res.status(404).json({ error: "Not found" });
+  if (!canViewContent(content, req.user, req.firebaseToken?.email_verified)) return res.status(404).json({ error: "Not found" });
 
   if (existing) {
     await existing.deleteOne();

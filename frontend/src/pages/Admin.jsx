@@ -5,6 +5,8 @@ import { typeLabel } from "../constants.js";
 
 export default function Admin() {
   const [pending, setPending] = useState([]);
+  const [tab, setTab] = useState("pending");
+  const [allContent, setAllContent] = useState([]);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [rejecting, setRejecting] = useState(null);
@@ -12,10 +14,15 @@ export default function Admin() {
 
   function load() {
     setLoading(true);
-    Promise.all([api.get("/api/admin/pending"), api.get("/api/admin/stats")])
-      .then(([p, s]) => {
+    Promise.all([
+      api.get("/api/admin/pending"),
+      api.get("/api/admin/stats"),
+      api.get("/api/admin/content"),
+    ])
+      .then(([p, s, all]) => {
         setPending(p.data);
         setStats(s.data);
+        setAllContent(all.data);
       })
       .finally(() => setLoading(false));
   }
@@ -34,6 +41,12 @@ export default function Admin() {
     load();
   }
 
+  async function deleteContent(id) {
+    if (!confirm("এই কন্টেন্ট স্থায়ীভাবে মুছে ফেলতে চাও?")) return;
+    await api.delete(`/api/admin/content/${id}`);
+    load();
+  }
+
   return (
     <div className="mx-auto max-w-4xl px-4 py-12">
       <h1 className="font-display text-3xl text-ink">Admin</h1>
@@ -47,9 +60,21 @@ export default function Admin() {
         </div>
       )}
 
-      <h2 className="mt-10 font-display text-xl text-ink">Approval queue</h2>
+      <div className="mt-10 flex gap-1 border-b border-line">
+        {["pending", "all"].map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={`px-4 py-2 text-sm capitalize ${
+              tab === t ? "border-b-2 border-accent text-ink" : "text-muted"
+            }`}
+          >
+            {t === "pending" ? "Approval Queue" : "All Content"}
+          </button>
+        ))}
+      </div>
 
-      {loading ? (
+      {tab === "pending" && (loading ?  (
         <p className="mt-4 text-sm text-muted">Loading…</p>
       ) : pending.length === 0 ? (
         <p className="mt-4 text-sm text-muted">Nothing waiting for review. 🎉</p>
@@ -101,6 +126,39 @@ export default function Admin() {
                   </button>
                 </div>
               )}
+            </li>
+          ))}
+               </ul>
+      ))}
+
+      {tab === "all" && !loading && (
+        <ul className="mt-6 space-y-3">
+          {allContent.map((item) => (
+            <li key={item._id} className="rounded-md border border-line p-4">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <p className="font-medium text-ink">{item.title}</p>
+                    {item.hasBrokenFiles && (
+                      <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs text-red-700 border border-red-200">
+                        ⚠️ Broken file
+                      </span>
+                    )}
+                    <span className="rounded-full border px-2 py-0.5 text-xs capitalize">
+                      {item.status}
+                    </span>
+                  </div>
+                  <p className="font-mono text-xs text-muted">
+                    {item.uploader?.name} · {item.uploader?.email}
+                  </p>
+                </div>
+                <button
+                  onClick={() => deleteContent(item._id)}
+                  className="shrink-0 rounded-md border border-red-200 px-3 py-1.5 text-sm text-red-700 hover:bg-red-50"
+                >
+                  Delete
+                </button>
+              </div>
             </li>
           ))}
         </ul>

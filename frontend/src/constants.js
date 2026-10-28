@@ -28,10 +28,10 @@ export const LICENSES = [
 
 export const VISIBILITY_OPTIONS = [
   { value: "public", label: "Public — anyone can find this" },
-  { value: "followers", label: "Followers only" },
-  { value: "university", label: "My university only" },
+  { value: "institutional", label: "Institutional - verified members of my institution" },
+  { value: "protected", label: "Protected / private - me and optional advisor/team emails" },
   { value: "private", label: "Private — only me" },
-];
+].filter((option) => option.value !== "private");
 
 export const SORT_OPTIONS = [
   { value: "recent", label: "Most recent" },
@@ -42,4 +42,9 @@ export const SORT_OPTIONS = [
 
 export function typeLabel(value) {
   return CONTENT_TYPES.find((t) => t.value === value)?.label || value;
+}
+
+export function optimizedImage(url, width = 400) {
+  if (!url || !url.includes("res.cloudinary.com")) return url;
+  return url.replace("/upload/", `/upload/f_auto,q_auto,w_${width}/`);
 }

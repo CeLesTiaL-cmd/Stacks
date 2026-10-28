@@ -33,6 +33,7 @@ export async function requireAuth(req, res, next) {
     }
 
     req.user = user;
+    req.firebaseToken = decoded;
     next();
   } catch (err) {
     console.error("Auth error:", err.message);

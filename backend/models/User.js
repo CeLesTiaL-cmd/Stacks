@@ -34,6 +34,12 @@ const UserSchema = new Schema(
     researchInterests: [{ type: String }],
     skills: [{ type: String }],
 
+    // --- Institutional verification (for the "Institutional" visibility tier) ---
+    institutionalEmail: { type: String, default: "", lowercase: true, trim: true },
+    institutionDomain: { type: String, default: "" }, // e.g. "iiuc.edu.bd" — used for matching content
+    institution: { type: String, default: "" }, // human-readable name, e.g. "IIUC"
+    isInstitutionalVerified: { type: Boolean, default: false },
+
     // Links
     website: { type: String, default: "" },
     github: { type: String, default: "" },

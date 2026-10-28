@@ -4,6 +4,8 @@ import Content from "../models/Content.js";
 import Bookmark from "../models/Bookmark.js";
 import { requireAuth, optionalAuth } from "../middleware/auth.js";
 import { upload } from "../middleware/upload.js";
+import { detectInstitution } from "../config/institutions.js";
+import { canViewContent } from "../middleware/contentAccess.js";
 
 const router = express.Router();
 
@@ -55,6 +57,41 @@ router.post(
   }
 );
 
+// POST /api/users/me/verify-institution — self-verify an institutional email by domain
+router.post("/me/verify-institution", requireAuth, async (req, res) => {
+  const { email } = req.body;
+  const normalizedEmail = typeof email === "string" ? email.trim().toLowerCase() : "";
+  const match = detectInstitution(normalizedEmail);
+
+  if (
+    !req.firebaseToken?.email_verified ||
+    normalizedEmail !== req.user.email.toLowerCase()
+  ) {
+    return res.status(403).json({
+      error: "Verify your sign-in email with your identity provider and use that same institutional email.",
+    });
+  }
+
+  if (!match) {
+    return res.status(400).json({
+      error: "This doesn't look like a recognized university email domain. Ask an admin to add your institution.",
+    });
+  }
+
+  const user = await User.findByIdAndUpdate(
+    req.user._id,
+    {
+      institutionalEmail: normalizedEmail,
+      institutionDomain: match.domain,
+      institution: match.name,
+      isInstitutionalVerified: true,
+    },
+    { new: true }
+  );
+
+  res.json(user);
+});
+
 // GET /api/users/me/dashboard — uploads grouped by status, bookmarks
 router.get("/me/dashboard", requireAuth, async (req, res) => {
   const [uploads, bookmarks] = await Promise.all([
@@ -64,8 +101,22 @@ router.get("/me/dashboard", requireAuth, async (req, res) => {
 
   res.json({
     uploads,
-    bookmarks: bookmarks.map((b) => b.content).filter(Boolean),
+    bookmarks: bookmarks.map((b) => b.content).filter((content) => canViewContent(content, req.user, req.firebaseToken?.email_verified)),
   });
+});
+
+// GET /api/users/leaderboard — top authors by stars received (public profiles only)
+router.get("/leaderboard", async (req, res) => {
+  const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 10));
+  const users = await User.find({
+    "privacy.profileVisibility": "public",
+    "privacy.hideStatistics": { $ne: true },
+    isSuspended: false,
+  })
+    .sort({ "stats.starsReceived": -1, "stats.uploadsCount": -1 })
+    .limit(limit)
+    .select("name avatarUrl university stats");
+  res.json(users);
 });
 
 // GET /api/users/:id — public profile (respects privacy settings)
@@ -80,6 +131,10 @@ router.get("/:id", optionalAuth, async (req, res) => {
   }
 
   const profile = user.toObject();
+  // Public profiles must never expose authentication or institutional email identifiers.
+  delete profile.firebaseUid;
+  delete profile.email;
+  delete profile.institutionalEmail;
   if (user.privacy.hideStatistics && !isOwner) delete profile.stats;
   if (user.privacy.hideFollowers && !isOwner) {
     delete profile.stats?.followersCount;
@@ -88,9 +143,9 @@ router.get("/:id", optionalAuth, async (req, res) => {
 
   let uploads = [];
   if (!user.privacy.hideUploadHistory || isOwner) {
-    uploads = await Content.find({ uploader: user._id, status: "approved" }).sort({
-      createdAt: -1,
-    });
+    uploads = await Content.find({ uploader: user._id, status: "approved", visibility: "public" })
+      .select("-authorizedEmails -institutionDomain")
+      .sort({ createdAt: -1 });
   }
 
   res.json({ profile, uploads });

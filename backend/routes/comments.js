@@ -2,11 +2,14 @@ import express from "express";
 import Comment from "../models/Comment.js";
 import Content from "../models/Content.js";
 import { requireAuth, optionalAuth } from "../middleware/auth.js";
+import { canViewContent } from "../middleware/contentAccess.js";
 
 const router = express.Router();
 
 // GET /api/comments/content/:contentId
 router.get("/content/:contentId", optionalAuth, async (req, res) => {
+  const content = await Content.findById(req.params.contentId);
+  if (!canViewContent(content, req.user, req.firebaseToken?.email_verified)) return res.status(404).json({ error: "Content not found" });
   const comments = await Comment.find({ content: req.params.contentId })
     .sort({ isPinned: -1, createdAt: 1 })
     .populate("author", "name avatarUrl role");
@@ -19,7 +22,7 @@ router.post("/content/:contentId", requireAuth, async (req, res) => {
   if (!body || !body.trim()) return res.status(400).json({ error: "Comment cannot be empty" });
 
   const content = await Content.findById(req.params.contentId);
-  if (!content) return res.status(404).json({ error: "Content not found" });
+  if (!canViewContent(content, req.user, req.firebaseToken?.email_verified)) return res.status(404).json({ error: "Content not found" });
 
   const comment = await Comment.create({
     content: content._id,

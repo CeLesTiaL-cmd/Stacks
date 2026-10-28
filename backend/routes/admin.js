@@ -2,10 +2,28 @@ import express from "express";
 import Content from "../models/Content.js";
 import User from "../models/User.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
+import { removeContentAndRelations } from "../services/removeContent.js";
 
 const router = express.Router();
 
 router.use(requireAuth, requireRole("admin", "moderator"));
+
+// GET /api/admin/content — all content (any status), flags legacy/broken files
+router.get("/content", async (req, res) => {
+  const { status } = req.query;
+  const filter = status ? { status } : {};
+  const items = await Content.find(filter)
+    .sort({ createdAt: -1 })
+    .populate("uploader", "name email");
+
+  const withFlags = items.map((item) => {
+    const obj = item.toObject();
+    obj.hasBrokenFiles = item.files.some((f) => !f.url.startsWith("http"));
+    return obj;
+  });
+
+  res.json(withFlags);
+});
 
 // GET /api/admin/pending — approval queue
 router.get("/pending", async (req, res) => {
@@ -49,7 +67,9 @@ router.patch("/content/:id/feature", async (req, res) => {
 
 // DELETE /api/admin/content/:id
 router.delete("/content/:id", async (req, res) => {
-  await Content.findByIdAndDelete(req.params.id);
+  const content = await Content.findById(req.params.id);
+  if (!content) return res.status(404).json({ error: "Not found" });
+  await removeContentAndRelations(content);
   res.json({ ok: true });
 });
 

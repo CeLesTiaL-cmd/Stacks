@@ -35,6 +35,7 @@ export default function Upload() {
   const [form, setForm] = useState(initialState);
   const [files, setFiles] = useState([]);
   const [thumbnail, setThumbnail] = useState(null);
+  const [authorizedEmails, setAuthorizedEmails] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
@@ -55,6 +56,7 @@ export default function Upload() {
     try {
       const fd = new FormData();
       Object.entries(form).forEach(([key, value]) => fd.append(key, value));
+      if (form.visibility === "protected") fd.append("authorizedEmails", authorizedEmails);
       files.forEach((f) => fd.append("files", f));
       if (thumbnail) fd.append("thumbnail", thumbnail);
 
@@ -183,6 +185,22 @@ export default function Upload() {
               ))}
             </select>
           </Field>
+          {form.visibility === "institutional" && (
+            <p className="text-xs text-muted">
+              Only users with a verified email from your institution can view this upload.
+            </p>
+          )}
+          {form.visibility === "protected" && (
+            <Field label="Advisor / team emails (optional)" hint="Comma separated. Leave blank for only you; added recipients need a verified account email.">
+              <input
+                className="input"
+                type="text"
+                value={authorizedEmails}
+                onChange={(e) => setAuthorizedEmails(e.target.value)}
+                placeholder="advisor@university.edu, teammate@example.com"
+              />
+            </Field>
+          )}
         </Section>
 
         <Section title="Files & links">
@@ -199,6 +217,7 @@ export default function Upload() {
               className="input"
               type="file"
               multiple
+              required
               onChange={(e) => setFiles(Array.from(e.target.files))}
             />
           </Field>

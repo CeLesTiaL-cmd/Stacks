@@ -67,11 +67,21 @@ const ContentSchema = new Schema(
       enum: ["all_rights_reserved", "cc_by", "cc_by_sa", "cc_by_nc", "cc0", "custom"],
       default: "all_rights_reserved",
     },
+
+    // --- Visibility (3-tier model) ---
+    // public         -> anyone, including other institutions
+    // institutional  -> only users institutionally verified with the SAME institutionDomain
+    // protected      -> only the uploader + emails listed in authorizedEmails (advisor/team)
     visibility: {
       type: String,
-      enum: ["public", "private", "followers", "university"],
+      enum: ["public", "institutional", "protected"],
       default: "public",
     },
+    // Auto-filled server-side from the uploader's verified institution at upload time.
+    // Only meaningful when visibility === "institutional".
+    institutionDomain: { type: String, default: "" },
+    // Only meaningful when visibility === "protected" — advisor/team member emails.
+    authorizedEmails: [{ type: String, lowercase: true, trim: true }],
 
     thumbnailUrl: { type: String, default: "" },
     previewImageUrls: [{ type: String }],
@@ -123,5 +133,6 @@ ContentSchema.index({ status: 1, createdAt: -1 });
 ContentSchema.index({ status: 1, "counts.downloads": -1 });
 ContentSchema.index({ status: 1, "counts.stars": -1 });
 ContentSchema.index({ category: 1, status: 1 });
+ContentSchema.index({ status: 1, visibility: 1, institutionDomain: 1 });
 
 export default mongoose.model("Content", ContentSchema);

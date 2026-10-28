@@ -5,6 +5,8 @@ import {
   createUserWithEmailAndPassword,
   signInWithPopup,
   sendPasswordResetEmail,
+  sendEmailVerification,
+  reload,
   signOut,
   updateProfile,
 } from "firebase/auth";
@@ -66,6 +68,14 @@ export function AuthProvider({ children }) {
     },
     async resetPassword(email) {
       return sendPasswordResetEmail(auth, email);
+    },
+    async sendVerificationEmail() {
+      if (auth.currentUser) await sendEmailVerification(auth.currentUser);
+    },
+    async refreshFirebaseUser() {
+      if (!auth.currentUser) return;
+      await reload(auth.currentUser);
+      await auth.currentUser.getIdToken(true);
     },
     async logout() {
       await signOut(auth);
