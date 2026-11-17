@@ -1,13 +1,14 @@
-import { Link } from "react-router-dom";
-
+import { Compass } from "lucide-react";
+import { useI18n } from "../i18n/index.jsx";
+import Button from "../components/ui/Button.jsx";
 export default function NotFound() {
+  const { t } = useI18n();
   return (
-    <div className="px-4 py-24 text-center">
-      <p className="font-display text-5xl text-ink">404</p>
-      <p className="mt-2 text-muted">This page isn't on the shelf.</p>
-      <Link to="/" className="mt-4 inline-block text-accent hover:underline">
-        Back home
-      </Link>
+    <div className="container-x flex flex-col items-center py-24 text-center">
+      <Compass className="size-10 text-subtle" strokeWidth={1.5} />
+      <p className="mt-4 font-display text-7xl font-bold tracking-display">404</p>
+      <p className="mt-2 text-muted">{t("nf.text")}</p>
+      <Button to="/" className="mt-6">{t("nf.home")}</Button>
     </div>
   );
 }

@@ -1,255 +1,212 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import api from "../api/client.js";
+import { Bookmark, Clock, Download, ExternalLink, Eye, Link2, MessageSquare, Pin, Reply, Share2, Star, Trash2, TriangleAlert } from "lucide-react";
+import api, { errorMessage } from "../api/client.js";
 import { useAuth } from "../context/AuthContext.jsx";
-import { typeLabel } from "../constants.js";
+import { useI18n } from "../i18n/index.jsx";
+import { useToast } from "../context/ToastContext.jsx";
+import { cn } from "../lib/cn.js";
+import { downloadFile, openInNewTab } from "../lib/download.js";
+import { optimizedImage } from "../lib/cloud.js";
+import { fileKind, TONE, TYPE_TONE } from "../lib/fileTypes.js";
+import { formatBytes, timeAgo } from "../lib/format.js";
+import Avatar from "../components/ui/Avatar.jsx";
+import Button from "../components/ui/Button.jsx";
+import { Textarea } from "../components/ui/form.jsx";
+import { Alert, Badge, EmptyState, PageSkeleton, ProgressBar } from "../components/ui/feedback.jsx";
+import { ConfirmDialog } from "../components/ui/Modal.jsx";
+
+function FileRow({ file, index, contentId, onError }) {
+  const { t } = useI18n();
+  const [progress, setProgress] = useState(null);
+  const k = fileKind(file.originalName);
+  const tone = TONE[k.tone];
+  const Icon = k.icon;
+  const valid = String(file.url || "").startsWith("http");
+
+  const download = async () => {
+    setProgress(0);
+    try {
+      const { data } = await api.post(`/api/content/${contentId}/download/${index}`);
+      try { await downloadFile(data.url, data.originalName || file.originalName, setProgress); }
+      catch { openInNewTab(data.url); } // browser blocked the fetch (CORS) — fall back to the plain link
+    } catch (err) { onError(err); }
+    finally { setTimeout(() => setProgress(null), 600); }
+  };
+
+  return (
+    <li className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center">
+      <div className="flex min-w-0 flex-1 items-center gap-3">
+        <span className={cn("inline-flex size-11 shrink-0 items-center justify-center rounded-xl", tone.bg)}><Icon className={cn("size-5", tone.text)} /></span>
+        <div className="min-w-0">
+          <p className="truncate text-sm font-medium" title={file.originalName}>{file.originalName}</p>
+          <p className="text-xs text-muted tabular-nums">{[k.ext.replace(".", "").toUpperCase(), formatBytes(file.sizeBytes)].filter(Boolean).join(" · ")}</p>
+        </div>
+      </div>
+      {valid ? (
+        <div className="flex shrink-0 items-center gap-2">
+          <Button variant="secondary" size="sm" href={file.url} target="_blank" rel="noopener noreferrer" iconStart={<ExternalLink className="size-4" />}>{t("file.open")}</Button>
+          <Button size="sm" onClick={download} loading={progress !== null} iconStart={<Download className="size-4" />}>{progress !== null && progress > 0 && progress < 100 ? `${progress}%` : t("file.download")}</Button>
+        </div>
+      ) : <Badge tone="danger" icon={TriangleAlert}>{t("file.unavailable")}</Badge>}
+      {progress !== null && progress > 0 && <ProgressBar value={progress} className="sm:hidden" />}
+    </li>
+  );
+}
+
+function Comment({ c, replies, canReply, canDelete, canPin, onReply, onDelete, onPin, depth = 0 }) {
+  const { t, locale } = useI18n();
+  return (
+    <li className={cn(depth && "ms-8 border-s border-line ps-4")}>
+      <div className="flex gap-3 py-4">
+        <Avatar src={c.author?.avatarUrl} name={c.author?.name} size={36} />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="text-sm font-medium">{c.author?.name}</span>
+            {c.isAuthorReply && <Badge tone="accent">{t("comment.author")}</Badge>}
+            {c.isModeratorReply && <Badge tone="sky">{t("comment.mod")}</Badge>}
+            {c.isPinned && <Badge tone="amber" icon={Pin}>{t("comment.pinned")}</Badge>}
+            <span className="text-xs text-muted">{timeAgo(c.createdAt, locale)}</span>
+          </div>
+          <p className="mt-1 whitespace-pre-line break-words text-sm text-ink/90">{c.body}</p>
+          <div className="mt-2 flex flex-wrap gap-3 text-xs text-muted">
+            {canReply && depth === 0 && <button onClick={() => onReply(c)} className="inline-flex items-center gap-1 hover:text-ink"><Reply className="size-3.5" />{t("comment.reply")}</button>}
+            {canPin && <button onClick={() => onPin(c)} className="inline-flex items-center gap-1 hover:text-ink"><Pin className="size-3.5" />{c.isPinned ? t("comment.unpin") : t("comment.pin")}</button>}
+            {canDelete(c) && <button onClick={() => onDelete(c)} className="inline-flex items-center gap-1 hover:text-danger"><Trash2 className="size-3.5" />{t("common.delete")}</button>}
+          </div>
+        </div>
+      </div>
+      {replies.length > 0 && <ul>{replies.map((r) => <Comment key={r._id} c={r} replies={[]} depth={1} canReply={false} canDelete={canDelete} canPin={false} onDelete={onDelete} />)}</ul>}
+    </li>
+  );
+}
 
 export default function ContentDetail() {
   const { slug } = useParams();
-  const { firebaseUser, profile } = useAuth();
-
+  const { t, n, d } = useI18n();
+  const toast = useToast();
+  const { firebaseUser, profile, isModerator } = useAuth();
   const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [status, setStatus] = useState("loading");
   const [comments, setComments] = useState([]);
-  const [commentBody, setCommentBody] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [body, setBody] = useState("");
+  const [replyTo, setReplyTo] = useState(null);
+  const [posting, setPosting] = useState(false);
+  const [toDelete, setToDelete] = useState(null);
 
-  const load = useCallback(() => {
-    setLoading(true);
-    api
-      .get(`/api/content/${slug}`)
-      .then(({ data }) => setData(data))
-      .catch(() => setData(null))
-      .finally(() => setLoading(false));
+  useEffect(() => {
+    let alive = true;
+    setStatus("loading");
+    api.get(`/api/content/${slug}`).then((r) => { if (alive) { setData(r.data); setStatus("ok"); } }).catch((e) => alive && setStatus(e.response?.status === 404 ? "missing" : "error"));
+    return () => { alive = false; };
   }, [slug]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  const contentId = data?.content?._id;
+  const loadComments = useCallback(() => { if (contentId) api.get(`/api/comments/content/${contentId}`).then((r) => setComments(r.data)).catch(() => {}); }, [contentId]);
+  useEffect(loadComments, [loadComments]);
 
-  useEffect(() => {
-    if (!data?.content?._id) return;
-    api
-      .get(`/api/comments/content/${data.content._id}`)
-      .then(({ data }) => setComments(data))
-      .catch(() => setComments([]));
-  }, [data?.content?._id]);
+  const tree = useMemo(() => {
+    const ids = new Set(comments.map((c) => c._id));
+    return comments.filter((c) => !c.parentComment || !ids.has(c.parentComment)).map((c) => ({ c, replies: comments.filter((r) => r.parentComment === c._id) }));
+  }, [comments]);
 
-  if (loading) return <div className="px-4 py-20 text-center text-muted">Loading…</div>;
-  if (!data) {
-    return (
-      <div className="px-4 py-20 text-center">
-        <p className="font-display text-xl text-ink">We couldn't find that upload.</p>
-        <Link to="/discover" className="mt-2 inline-block text-accent hover:underline">
-          Back to discover
-        </Link>
-      </div>
-    );
-  }
+  if (status === "loading") return <PageSkeleton />;
+  if (status !== "ok") return <div className="container-x py-24"><EmptyState icon={Link2} title={status === "missing" ? t("detail.missing") : t("err.generic")} text={status === "missing" ? t("detail.missingText") : undefined} action={<Button to="/discover">{t("nav.discover")}</Button>} /></div>;
 
   const { content, viewerHasStarred, viewerHasBookmarked } = data;
+  const isOwner = profile && String(content.uploader?._id) === String(profile._id);
+  const toneName = TYPE_TONE[content.type] || "muted";
 
-  async function toggleStar() {
-    if (!firebaseUser) return;
-    setBusy(true);
+  // Update local state from the response — reloading the page would count an extra view each time.
+  const toggle = async (kind) => {
+    if (!firebaseUser) return toast.info(t("detail.signInFirst"));
     try {
-      await api.post(`/api/content/${content._id}/star`);
-      load();
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function toggleBookmark() {
-    if (!firebaseUser) return;
-    setBusy(true);
-    try {
-      await api.post(`/api/content/${content._id}/bookmark`);
-      load();
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleDownload(fileIndex) {
-    const { data: result } = await api.post(`/api/content/${content._id}/download/${fileIndex}`);
-    const fullUrl = result.url.startsWith("http")
-      ? result.url
-      : `${api.defaults.baseURL}${result.url}`;
-    window.open(fullUrl, "_blank");
-  }
-
-  async function submitComment(e) {
+      const { data: r } = await api.post(`/api/content/${content._id}/${kind}`);
+      setData((p) => kind === "star"
+        ? { ...p, viewerHasStarred: r.starred, content: { ...p.content, counts: { ...p.content.counts, stars: r.starCount } } }
+        : { ...p, viewerHasBookmarked: r.bookmarked, content: { ...p.content, counts: { ...p.content.counts, bookmarks: r.bookmarkCount } } });
+    } catch (err) { toast.error(errorMessage(err, t)); }
+  };
+  const share = async () => {
+    const url = window.location.href;
+    try { if (navigator.share) await navigator.share({ title: content.title, url }); else { await navigator.clipboard.writeText(url); toast.success(t("detail.copied")); } } catch { /* cancelled */ }
+  };
+  const post = async (e) => {
     e.preventDefault();
-    if (!commentBody.trim()) return;
-    const { data: created } = await api.post(`/api/comments/content/${content._id}`, {
-      body: commentBody,
-    });
-    setComments((c) => [...c, created]);
-    setCommentBody("");
-  }
+    if (!body.trim()) return;
+    setPosting(true);
+    try { await api.post(`/api/comments/content/${content._id}`, { body, parentComment: replyTo?._id }); setBody(""); setReplyTo(null); loadComments(); }
+    catch (err) { toast.error(errorMessage(err, t)); } finally { setPosting(false); }
+  };
+  const removeComment = async () => { try { await api.delete(`/api/comments/${toDelete._id}`); setToDelete(null); loadComments(); } catch (err) { toast.error(errorMessage(err, t)); } };
+  const pin = async (c) => { try { await api.patch(`/api/comments/${c._id}/pin`); loadComments(); } catch (err) { toast.error(errorMessage(err, t)); } };
 
-  async function handleShare() {
-    await navigator.clipboard.writeText(window.location.href);
-    alert("Link copied to clipboard");
-  }
+  const meta = [
+    [t("detail.category"), content.category], [t("filter.university"), content.university], [t("filter.department"), content.department],
+    [t("detail.course"), content.course], [t("detail.teacher"), content.teacher], [t("detail.semester"), content.semester],
+    [t("filter.year"), content.year], [t("filter.language"), content.language], [t("detail.license"), t(`license.${content.license}`)],
+    [t("detail.visibility"), t(`vis.${content.visibility}`)], ["DOI", content.doi], [t("detail.publication"), content.publication],
+  ].filter(([, v]) => v);
+  const links = [content.githubRepo, content.youtubeUrl, ...(content.externalLinks || [])].filter(Boolean);
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-12">
-      <p className="font-mono text-xs uppercase tracking-wide text-muted">{typeLabel(content.type)}</p>
-      <h1 className="mt-2 font-display text-3xl leading-tight text-ink">{content.title}</h1>
-      {content.subtitle && <p className="mt-1 text-lg text-muted">{content.subtitle}</p>}
+    <article className="container-x py-8 sm:py-12">
+      {content.status !== "approved" && (isOwner || isModerator) && (
+        <Alert tone={content.status === "rejected" ? "danger" : "warn"} className="mb-6 flex items-start gap-2">
+          <Clock className="mt-0.5 size-4 shrink-0" />
+          <span>{content.status === "rejected" ? `${t("detail.rejected")}${content.rejectionReason ? `: ${content.rejectionReason}` : ""}` : t("detail.pending")}</span>
+        </Alert>
+      )}
+      <div className="grid grid-cols-1 gap-10 lg:grid-cols-[1fr_20rem]">
+        <div className="min-w-0">
+          <Badge tone={toneName}>{t(`type.${content.type}`)}</Badge>
+          <h1 className="mt-3 break-words font-display text-3xl font-bold leading-tight tracking-display sm:text-5xl">{content.title}</h1>
+          {content.subtitle && <p className="mt-2 text-lg text-muted">{content.subtitle}</p>}
+          <div className="mt-5 flex flex-wrap items-center gap-3 text-sm text-muted">
+            <Link to={`/profile/${content.uploader?._id}`} className="inline-flex items-center gap-2 font-medium text-ink hover:text-accent-text"><Avatar src={content.uploader?.avatarUrl} name={content.uploader?.name} size={28} />{content.uploader?.name}</Link>
+            <span>{d(content.createdAt)}</span>
+          </div>
+          {content.thumbnailUrl && <img src={optimizedImage(content.thumbnailUrl, 1200)} alt="" decoding="async" className="mt-6 max-h-[28rem] w-full rounded-2xl border border-line object-cover" />}
+          {content.tags?.length > 0 && <div className="mt-6 flex flex-wrap gap-2">{content.tags.map((tag) => <Link key={tag} to={`/discover?tag=${encodeURIComponent(tag)}`} className="rounded-full border border-line px-3 py-1 font-mono text-xs text-muted transition hover:border-accent hover:text-accent-text">#{tag}</Link>)}</div>}
+          {content.abstract && <section className="mt-8"><h2 className="mb-2 font-display text-xl font-semibold tracking-display">{t("detail.abstract")}</h2><p className="whitespace-pre-line break-words leading-relaxed">{content.abstract}</p></section>}
+          {content.description && <section className="mt-8"><h2 className="mb-2 font-display text-xl font-semibold tracking-display">{t("detail.description")}</h2><p className="whitespace-pre-line break-words leading-relaxed text-ink/90">{content.description}</p></section>}
+          {content.files?.length > 0 && (
+            <section className="mt-10"><h2 className="mb-3 font-display text-xl font-semibold tracking-display">{t("detail.files")}</h2>
+              <ul className="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-raised">{content.files.map((f, i) => <FileRow key={i} file={f} index={i} contentId={content._id} onError={(err) => toast.error(errorMessage(err, t))} />)}</ul>
+            </section>
+          )}
+          {links.length > 0 && <section className="mt-8 flex flex-wrap gap-3 text-sm">{links.map((u) => <a key={u} href={u} target="_blank" rel="noopener noreferrer" className="inline-flex max-w-full items-center gap-1 text-accent-text hover:underline"><span className="truncate">{u.replace(/^https?:\/\//, "")}</span><ExternalLink className="size-3.5 shrink-0" /></a>)}</section>}
 
-      <div className="mt-4 flex flex-wrap items-center gap-3 text-sm text-muted">
-        <Link to={`/profile/${content.uploader._id}`} className="font-medium text-ink hover:text-accent">
-          {content.uploader.name}
-        </Link>
-        {content.university && <span>· {content.university}</span>}
-        {content.year && <span>· {content.year}</span>}
-      </div>
-
-      {content.tags?.length > 0 && (
-        <div className="mt-4 flex flex-wrap gap-2">
-          {content.tags.map((tag) => (
-            <Link
-              key={tag}
-              to={`/discover?tag=${encodeURIComponent(tag)}`}
-              className="rounded-full border border-line px-3 py-1 font-mono text-xs text-muted hover:border-accent hover:text-accent"
-            >
-              #{tag}
-            </Link>
-          ))}
+          <section className="mt-12">
+            <h2 className="flex items-center gap-2 font-display text-xl font-semibold tracking-display"><MessageSquare className="size-5" />{t("detail.discussion")} <span className="text-muted tabular-nums">({n(comments.length)})</span></h2>
+            {firebaseUser ? (
+              <form onSubmit={post} className="mt-4 space-y-2">
+                {replyTo && <p className="text-xs text-muted">{t("comment.replyingTo", { name: replyTo.author?.name })} <button type="button" className="underline" onClick={() => setReplyTo(null)}>{t("common.cancel")}</button></p>}
+                <Textarea value={body} onChange={(e) => setBody(e.target.value)} placeholder={t("comment.placeholder")} maxLength={2000} className="min-h-24" aria-label={t("detail.discussion")} />
+                <div className="flex justify-end"><Button type="submit" size="sm" loading={posting} disabled={!body.trim()}>{t("comment.post")}</Button></div>
+              </form>
+            ) : <p className="mt-4 text-sm text-muted"><Link to="/login" className="text-accent-text underline">{t("nav.signin")}</Link> {t("comment.toJoin")}</p>}
+            {tree.length === 0 ? <p className="mt-6 text-sm text-muted">{t("comment.none")}</p> : (
+              <ul className="mt-4 divide-y divide-line">{tree.map(({ c, replies }) => <Comment key={c._id} c={c} replies={replies} canReply={!!firebaseUser} canPin={isOwner || isModerator} canDelete={(x) => profile && (String(x.author?._id) === String(profile._id) || isModerator)} onReply={setReplyTo} onDelete={setToDelete} onPin={pin} />)}</ul>
+            )}
+          </section>
         </div>
-      )}
 
-      <div className="mt-8 flex items-center gap-3 border-y border-line py-3">
-        <button
-          onClick={toggleStar}
-          disabled={busy || !firebaseUser}
-          className={`rounded-md border px-3 py-1.5 text-sm ${
-            viewerHasStarred ? "border-accent bg-accent-tint text-accent" : "border-line text-ink"
-          }`}
-        >
-          ★ {content.counts.stars}
-        </button>
-        <button
-          onClick={toggleBookmark}
-          disabled={busy || !firebaseUser}
-          className={`rounded-md border px-3 py-1.5 text-sm ${
-            viewerHasBookmarked ? "border-accent bg-accent-tint text-accent" : "border-line text-ink"
-          }`}
-        >
-          {viewerHasBookmarked ? "Bookmarked" : "Bookmark"}
-        </button>
-        <button onClick={handleShare} className="rounded-md border border-line px-3 py-1.5 text-sm text-ink">
-          Share
-        </button>
-        <span className="ml-auto font-mono text-xs text-muted">
-          {content.counts.views} views · {content.counts.downloads} downloads
-        </span>
-      </div>
-
-      {content.abstract && (
-        <section className="mt-8">
-          <h2 className="font-display text-xl text-ink">Abstract</h2>
-          <p className="mt-2 whitespace-pre-line text-sm leading-relaxed text-ink/90">{content.abstract}</p>
-        </section>
-      )}
-
-      {content.description && (
-        <section className="mt-8">
-          <h2 className="font-display text-xl text-ink">Description</h2>
-          <p className="mt-2 whitespace-pre-line text-sm leading-relaxed text-ink/90">{content.description}</p>
-        </section>
-      )}
-
-      {content.files?.length > 0 && (
-        <section className="mt-8">
-          <h2 className="font-display text-xl text-ink">Files</h2>
-          <ul className="mt-3 divide-y divide-line rounded-md border border-line">
-            {content.files.map((file, i) => (
-              <li key={i} className="flex items-center justify-between px-4 py-3 text-sm">
-                <span className="text-ink">{file.originalName}</span>
-                <button onClick={() => handleDownload(i)} className="text-accent hover:underline">
-                  Download
-                </button>
-              </li>
+        <aside className="min-w-0 space-y-4 lg:sticky lg:top-24 lg:self-start">
+          <div className="flex gap-2">
+            <Button variant={viewerHasStarred ? "primary" : "secondary"} className="flex-1" onClick={() => toggle("star")} iconStart={<Star className={cn("size-4", viewerHasStarred && "fill-current")} />} aria-pressed={viewerHasStarred}>{n(content.counts?.stars ?? 0)}</Button>
+            <Button variant={viewerHasBookmarked ? "primary" : "secondary"} className="flex-1" onClick={() => toggle("bookmark")} iconStart={<Bookmark className={cn("size-4", viewerHasBookmarked && "fill-current")} />} aria-pressed={viewerHasBookmarked}>{t("detail.save")}</Button>
+            <Button variant="secondary" size="icon" onClick={share} aria-label={t("detail.share")}><Share2 className="size-4" /></Button>
+          </div>
+          <div className="grid grid-cols-3 gap-2 text-center">
+            {[[Eye, content.counts?.views, t("stat.views")], [Download, content.counts?.downloads, t("stat.downloads")], [MessageSquare, content.counts?.comments, t("stat.comments")]].map(([Icon, v, l]) => (
+              <div key={l} className="rounded-xl border border-line bg-raised px-2 py-3"><Icon className="mx-auto size-4 text-muted" /><p className="mt-1 font-display text-lg font-bold tabular-nums">{n(v ?? 0)}</p><p className="text-[11px] text-muted">{l}</p></div>
             ))}
-          </ul>
-        </section>
-      )}
-
-      {(content.githubRepo || content.youtubeUrl || content.doi) && (
-        <section className="mt-8 space-y-1 text-sm">
-          {content.githubRepo && (
-            <p>
-              <span className="text-muted">GitHub: </span>
-              <a href={content.githubRepo} className="text-accent hover:underline" target="_blank" rel="noreferrer">
-                {content.githubRepo}
-              </a>
-            </p>
-          )}
-          {content.youtubeUrl && (
-            <p>
-              <span className="text-muted">Video: </span>
-              <a href={content.youtubeUrl} className="text-accent hover:underline" target="_blank" rel="noreferrer">
-                {content.youtubeUrl}
-              </a>
-            </p>
-          )}
-          {content.doi && (
-            <p>
-              <span className="text-muted">DOI: </span>
-              <span className="font-mono">{content.doi}</span>
-            </p>
-          )}
-        </section>
-      )}
-
-      <section className="mt-10">
-        <h2 className="font-display text-xl text-ink">
-          Discussion ({comments.length})
-        </h2>
-
-        {firebaseUser ? (
-          <form onSubmit={submitComment} className="mt-4 flex gap-2">
-            <input
-              value={commentBody}
-              onChange={(e) => setCommentBody(e.target.value)}
-              placeholder="Ask a question or share a thought…"
-              className="input flex-1"
-            />
-            <button type="submit" className="rounded-md bg-accent px-4 text-sm text-canvas hover:bg-accent-dark">
-              Post
-            </button>
-          </form>
-        ) : (
-          <p className="mt-4 text-sm text-muted">
-            <Link to="/login" className="text-accent hover:underline">
-              Sign in
-            </Link>{" "}
-            to join the discussion.
-          </p>
-        )}
-
-        <ul className="mt-6 space-y-4">
-          {comments.map((c) => (
-            <li key={c._id} className="border-b border-line pb-4">
-              <div className="flex items-center gap-2 text-sm">
-                <span className="font-medium text-ink">{c.author?.name}</span>
-                {c.isAuthorReply && (
-                  <span className="rounded-full bg-accent-tint px-2 py-0.5 text-xs text-accent">Author</span>
-                )}
-                {c.isPinned && <span className="text-xs text-muted">· Pinned</span>}
-              </div>
-              <p className="mt-1 text-sm text-ink/90">{c.body}</p>
-            </li>
-          ))}
-          {comments.length === 0 && (
-            <p className="text-sm text-muted">No comments yet — be the first to ask a question.</p>
-          )}
-        </ul>
-      </section>
-    </div>
+          </div>
+          {meta.length > 0 && <dl className="divide-y divide-line rounded-2xl border border-line bg-raised text-sm">{meta.map(([k, v]) => <div key={k} className="flex justify-between gap-4 px-4 py-2.5"><dt className="shrink-0 text-muted">{k}</dt><dd className="min-w-0 break-words text-end font-medium">{v}</dd></div>)}</dl>}
+        </aside>
+      </div>
+      <ConfirmDialog open={!!toDelete} onClose={() => setToDelete(null)} onConfirm={removeComment} title={t("comment.deleteTitle")} text={t("comment.deleteText")} confirmLabel={t("common.delete")} />
+    </article>
   );
 }

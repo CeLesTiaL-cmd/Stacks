@@ -1,56 +1,53 @@
+@import "lenis/dist/lenis.css";
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-html {
-  scroll-behavior: smooth;
+:root {
+  --canvas: 250 250 247; --surface: 242 243 238; --raised: 255 255 255; --ink: 18 21 18; --muted: 91 99 93; --subtle: 134 142 136; --line: 226 229 221;
+  --accent: 11 122 85; --accent-hover: 8 98 69; --accent-ink: 255 255 255; --accent-tint: 226 243 235; --accent-text: 8 106 74;
+  --danger: 193 52 52; --warn: 168 108 10;
+  --tone-sky: 31 118 176; --tone-mint: 15 138 100; --tone-lilac: 120 88 190; --tone-amber: 176 112 10; --tone-rose: 200 60 90;
+  --shadow: 20 30 24;
+  --font-display: "Bricolage Grotesque", "Hanken Grotesk", system-ui, sans-serif;
+  --font-body: "Hanken Grotesk", system-ui, -apple-system, "Segoe UI", "Nirmala UI", "Noto Sans Bengali", "Noto Sans Devanagari", "Noto Sans Arabic", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  --track-display: -0.025em;
+  color-scheme: light;
 }
-
-body {
-  -webkit-font-smoothing: antialiased;
+.dark {
+  --canvas: 10 14 12; --surface: 17 23 19; --raised: 21 29 24; --ink: 238 242 238; --muted: 154 165 158; --subtle: 107 118 111; --line: 33 43 37;
+  --accent: 52 211 153; --accent-hover: 94 224 180; --accent-ink: 4 19 12; --accent-tint: 17 44 33; --accent-text: 94 224 180;
+  --danger: 248 113 113; --warn: 251 191 36;
+  --tone-sky: 125 190 240; --tone-mint: 94 224 180; --tone-lilac: 183 160 245; --tone-amber: 245 187 80; --tone-rose: 250 138 160;
+  --shadow: 0 0 0;
+  color-scheme: dark;
 }
+html[lang="bn"] { --font-display: "Hind Siliguri", "Noto Sans Bengali", "Nirmala UI", sans-serif; --font-body: "Hind Siliguri", "Noto Sans Bengali", "Nirmala UI", "Hanken Grotesk", sans-serif; --track-display: 0; }
+html[lang="hi"] { --font-display: "Noto Sans Devanagari", "Nirmala UI", sans-serif; --font-body: "Noto Sans Devanagari", "Nirmala UI", "Hanken Grotesk", sans-serif; --track-display: 0; }
+html[lang="ar"] { --font-display: "Noto Sans Arabic", "Segoe UI", sans-serif; --font-body: "Noto Sans Arabic", "Segoe UI", "Hanken Grotesk", sans-serif; --track-display: 0; }
+html[lang="bn"] body, html[lang="hi"] body, html[lang="ar"] body { line-height: 1.75; }
 
-::selection {
-  background-color: #1b433222;
+@layer base {
+  html { scrollbar-gutter: stable; -webkit-text-size-adjust: 100%; }
+  body { @apply bg-canvas font-sans text-base leading-relaxed text-ink antialiased; text-rendering: optimizeLegibility; }
+  ::selection { background: rgb(var(--accent) / 0.25); }
+  :focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 2px; border-radius: 6px; }
+  img { @apply max-w-full; }
+  input, select, textarea { font-size: max(16px, 1rem); }
+  @media (min-width: 640px) { input, select, textarea { font-size: 0.875rem; } }
 }
-
-/* Visible keyboard focus everywhere, instead of the default browser ring */
-a:focus-visible,
-button:focus-visible,
-input:focus-visible,
-textarea:focus-visible,
-select:focus-visible {
-  outline: 2px solid #1b4332;
-  outline-offset: 2px;
-  border-radius: 4px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  * {
-    animation-duration: 0.001ms !important;
-    transition-duration: 0.001ms !important;
-  }
-}
-
-.line-clamp-2 {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.line-clamp-3 {
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
 @layer components {
-  .input {
-    @apply w-full rounded-md border border-line bg-canvas px-3 py-2 text-sm text-ink placeholder:text-muted;
-  }
-  .input:focus {
-    @apply border-accent outline-none;
-  }
+  .container-x { @apply mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8; }
+  .tracking-display { letter-spacing: var(--track-display); }
+  .eyebrow { @apply font-mono text-xs font-medium uppercase tracking-[0.14em] text-accent-text; }
+  .section { @apply py-14 sm:py-20; }
+  .skeleton { @apply relative overflow-hidden rounded-lg bg-surface; }
+  .skeleton::after { content: ""; @apply absolute inset-0 animate-shimmer bg-gradient-to-r from-transparent via-ink/5 to-transparent; }
+  .grid-paper { background-image: linear-gradient(to right, rgb(var(--ink) / 0.06) 1px, transparent 1px), linear-gradient(to bottom, rgb(var(--ink) / 0.06) 1px, transparent 1px); background-size: 22px 22px; }
+  .no-scrollbar { scrollbar-width: none; }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
 }

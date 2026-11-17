@@ -1,118 +1,47 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { Eye, EyeOff, Mail, UserRound } from "lucide-react";
 import { useAuth } from "../context/AuthContext.jsx";
+import { useI18n } from "../i18n/index.jsx";
+import { useToast } from "../context/ToastContext.jsx";
+import AuthShell from "./AuthShell.jsx";
+import { Divider, SocialButtons, authErrorKey } from "./authShared.jsx";
+import { Field, Input } from "../components/ui/form.jsx";
+import { Alert } from "../components/ui/feedback.jsx";
+import Button from "../components/ui/Button.jsx";
 
 export default function Register() {
+  const { t } = useI18n();
+  const toast = useToast();
   const { register, loginWithGoogle, loginWithGithub } = useAuth();
   const navigate = useNavigate();
+  const [name, setName] = useState(""); const [email, setEmail] = useState(""); const [password, setPassword] = useState("");
+  const [show, setShow] = useState(false); const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
 
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  async function handleSubmit(e) {
-    e.preventDefault();
-    setError("");
-    if (password.length < 6) {
-      setError("Password must be at least 6 characters.");
-      return;
-    }
-    setBusy(true);
-    try {
-      await register(name, email, password);
-      navigate("/");
-    } catch (err) {
-      setError(friendlyError(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleProvider(fn) {
-    setError("");
-    setBusy(true);
-    try {
-      await fn();
-      navigate("/");
-    } catch (err) {
-      setError(friendlyError(err));
-    } finally {
-      setBusy(false);
-    }
-  }
+  const run = async (fn, verify) => {
+    setError(""); setBusy(true);
+    try { await fn(); if (verify) toast.info(t("auth.verifySent")); navigate("/dashboard", { replace: true }); }
+    catch (err) { const key = authErrorKey(err); if (key) setError(t(key)); }
+    finally { setBusy(false); }
+  };
+  const submit = (e) => { e.preventDefault(); if (password.length < 6) return setError(t("auth.err.weak")); run(() => register(name.trim(), email, password), true); };
+  const icon = "pointer-events-none absolute start-3.5 top-1/2 size-4 -translate-y-1/2 text-subtle";
 
   return (
-    <div className="mx-auto max-w-sm px-4 py-16">
-      <h1 className="font-display text-2xl text-ink">Create your account</h1>
-      <p className="mt-1 text-sm text-muted">Join students and researchers sharing their work.</p>
-
-      <form onSubmit={handleSubmit} className="mt-6 space-y-4">
-        <label className="block">
-          <span className="mb-1 block text-sm font-medium text-ink">Full name</span>
-          <input className="input" value={name} onChange={(e) => setName(e.target.value)} required />
-        </label>
-        <label className="block">
-          <span className="mb-1 block text-sm font-medium text-ink">Email</span>
-          <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-        </label>
-        <label className="block">
-          <span className="mb-1 block text-sm font-medium text-ink">Password</span>
-          <input
-            className="input"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
-        </label>
-
-        {error && <p className="text-sm text-red-600">{error}</p>}
-
-        <button
-          type="submit"
-          disabled={busy}
-          className="w-full rounded-md bg-accent py-2.5 text-sm font-medium text-canvas hover:bg-accent-dark disabled:opacity-50"
-        >
-          Create account
-        </button>
+    <AuthShell title={t("auth.registerTitle")} subtitle={t("auth.registerSub")}>
+      <SocialButtons busy={busy} onGoogle={() => run(loginWithGoogle)} onGithub={() => run(loginWithGithub)} />
+      <Divider>{t("auth.or")}</Divider>
+      <form onSubmit={submit} className="space-y-4" noValidate>
+        <Field label={t("auth.name")}>{(id) => <div className="relative"><UserRound className={icon} /><Input id={id} autoComplete="name" required value={name} onChange={(e) => setName(e.target.value)} className="ps-10" /></div>}</Field>
+        <Field label={t("auth.email")}>{(id) => <div className="relative"><Mail className={icon} /><Input id={id} type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} className="ps-10" /></div>}</Field>
+        <Field label={t("auth.password")} hint={t("auth.pwHint")}>{(id) => (
+          <div className="relative"><Input id={id} type={show ? "text" : "password"} autoComplete="new-password" required value={password} onChange={(e) => setPassword(e.target.value)} className="pe-11" />
+            <button type="button" onClick={() => setShow((v) => !v)} className="absolute end-2 top-1/2 -translate-y-1/2 rounded-full p-2 text-muted hover:text-ink" aria-label={t("auth.togglePw")}>{show ? <EyeOff className="size-4" /> : <Eye className="size-4" />}</button></div>
+        )}</Field>
+        {error && <Alert tone="danger">{error}</Alert>}
+        <Button type="submit" className="w-full" loading={busy}>{t("auth.createAccount")}</Button>
       </form>
-
-      <div className="my-6 flex items-center gap-3 text-xs text-muted">
-        <span className="h-px flex-1 bg-line" />
-        or continue with
-        <span className="h-px flex-1 bg-line" />
-      </div>
-
-      <div className="space-y-2">
-        <button
-          onClick={() => handleProvider(loginWithGoogle)}
-          className="w-full rounded-md border border-line py-2.5 text-sm text-ink hover:border-accent"
-        >
-          Continue with Google
-        </button>
-        <button
-          onClick={() => handleProvider(loginWithGithub)}
-          className="w-full rounded-md border border-line py-2.5 text-sm text-ink hover:border-accent"
-        >
-          Continue with GitHub
-        </button>
-      </div>
-
-      <p className="mt-6 text-sm text-muted">
-        Already have an account?{" "}
-        <Link to="/login" className="text-accent hover:underline">
-          Sign in
-        </Link>
-      </p>
-    </div>
+      <p className="mt-8 text-sm text-muted">{t("auth.haveAccount")} <Link to="/login" className="font-medium text-accent-text underline-offset-4 hover:underline">{t("nav.signin")}</Link></p>
+    </AuthShell>
   );
-}
-
-function friendlyError(err) {
-  const code = err?.code || "";
-  if (code.includes("email-already-in-use")) return "An account with that email already exists.";
-  if (code.includes("weak-password")) return "Please choose a stronger password.";
-  return "Something went wrong creating your account. Please try again.";
 }
