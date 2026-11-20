@@ -26,7 +26,7 @@ export function Modal({ open, onClose, title, children, footer, size = "md" }) {
           <motion.div className="absolute inset-0 bg-ink/45 backdrop-blur-sm" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} />
           <motion.div ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-label={title} data-lenis-prevent
             initial={{ opacity: 0, y: 40 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 24 }} transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
-            className={cn("relative flex max-h-[92dvh] w-full flex-col rounded-t-3xl border border-line bg-raised shadow-lift outline-none sm:rounded-3xl", size === "lg" ? "sm:max-w-2xl" : size === "sm" ? "sm:max-w-sm" : "sm:max-w-lg")}>
+            className={cn("relative flex max-h-[92dvh] w-full flex-col rounded-t-3xl border border-line bg-raised shadow-lift outline-none sm:rounded-3xl", size === "xl" ? "sm:max-w-5xl" : size === "lg" ? "sm:max-w-2xl" : size === "sm" ? "sm:max-w-sm" : "sm:max-w-lg")}>
             <div className="flex items-center justify-between gap-4 border-b border-line px-5 py-4">
               <h2 className="min-w-0 truncate font-display text-lg font-semibold tracking-display">{title}</h2>
               <button type="button" onClick={onClose} className="rounded-full p-1.5 text-muted transition hover:bg-surface hover:text-ink" aria-label={t("common.close")}><X className="size-5" /></button>

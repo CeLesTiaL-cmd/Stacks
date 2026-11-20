@@ -38,6 +38,7 @@ export default function Navbar() {
   const links = [
     { to: "/discover", label: t("nav.discover") },
     { to: "/leaderboard", label: t("nav.leaderboard") },
+    { to: "/resources", label: t("nav.resources") },
     ...(firebaseUser ? [{ to: "/upload", label: t("nav.upload") }] : []),
     ...(isModerator ? [{ to: "/admin", label: t("nav.admin") }] : []),
   ];

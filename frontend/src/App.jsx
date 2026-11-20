@@ -17,6 +17,7 @@ const Upload = lazy(() => import("./pages/Upload.jsx"));
 const Dashboard = lazy(() => import("./pages/Dashboard.jsx"));
 const Profile = lazy(() => import("./pages/Profile.jsx"));
 const Leaderboard = lazy(() => import("./pages/Leaderboard.jsx"));
+const Resources = lazy(() => import("./pages/Resources.jsx"));
 const Admin = lazy(() => import("./pages/Admin.jsx"));
 const Login = lazy(() => import("./pages/Login.jsx"));
 const Register = lazy(() => import("./pages/Register.jsx"));
@@ -39,6 +40,7 @@ export default function App() {
                 <Route path="/" element={<Home />} />
                 <Route path="/discover" element={<Discover />} />
                 <Route path="/leaderboard" element={<Leaderboard />} />
+                <Route path="/resources" element={<Resources />} />
                 <Route path="/content/:slug" element={<ContentDetail />} />
                 <Route path="/profile/:id" element={<Profile />} />
                 <Route path="/login" element={<Login />} />
