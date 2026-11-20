@@ -8,6 +8,7 @@ const AiDocSchema = new Schema(
     fingerprint: { type: String, default: "" },
     chunks: [{ _id: false, fileIndex: Number, fileName: String, text: String, embedding: [Number] }],
     embedded: { type: Boolean, default: false },
+    embedTriedAt: { type: Date },
     indexedAt: { type: Date },
     summary: { type: String, default: "" },
     summaryAt: { type: Date },

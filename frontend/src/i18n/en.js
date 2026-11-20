@@ -146,4 +146,5 @@ export default {
   "res.cat.science": "Science & health",
   "res.cat.bd": "Bangladesh",
   "res.cat.tools": "Writing & tools",
+  "view.legacy": "This file was uploaded before in-page previews existed, so it can't be previewed yet. Download it now; an admin can run the one-time file fix to enable previews.",
 };

@@ -55,7 +55,19 @@ export function createAiRouter(deps = {}) {
   async function ensureIndexed(content) {
     const fp = D.rag.fingerprintOf(content.files);
     let doc = await D.AiDoc.findOne({ content: content._id });
-    if (doc && doc.fingerprint === fp && doc.indexedAt) return doc;
+    if (doc && doc.fingerprint === fp && doc.indexedAt) {
+      // embeddings failed last time (e.g. Google was busy): retry them now, without re-reading the files
+      if (!doc.embedded && doc.chunks?.length && (!doc.embedTriedAt || D.now() - new Date(doc.embedTriedAt).getTime() > 10 * 60000)) {
+        doc.embedTriedAt = new Date(D.now());
+        try {
+          const vecs = await D.gemini.embedTexts(doc.chunks.map((c) => c.text), "RETRIEVAL_DOCUMENT");
+          doc.chunks.forEach((c, i) => { c.embedding = vecs[i]; });
+          doc.embedded = true;
+        } catch (e) { console.warn("[AI] embeddings still unavailable:", e.message); }
+        await doc.save();
+      }
+      return doc;
+    }
     const chunks = [];
     for (const [i, f] of (content.files || []).slice(0, 4).entries()) {
       try {
@@ -73,7 +85,7 @@ export function createAiRouter(deps = {}) {
         embedded = true;
       } catch (e) { console.warn("[AI] embeddings unavailable, using keyword search:", e.message); }
     }
-    const data = { fingerprint: fp, chunks: kept, embedded, indexedAt: new Date(D.now()), summary: "", summaryAt: undefined };
+    const data = { fingerprint: fp, chunks: kept, embedded, embedTriedAt: new Date(D.now()), indexedAt: new Date(D.now()), summary: "", summaryAt: undefined };
     doc = doc ? Object.assign(doc, data) : new D.AiDoc({ content: content._id, ...data });
     await doc.save();
     return doc;
